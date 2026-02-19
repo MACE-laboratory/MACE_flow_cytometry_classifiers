@@ -17,7 +17,7 @@ The pipeline includes:
 
 ---
 
-# Overview of the Workflow
+## Overview of the Workflow
 
 The script performs the following steps:
 
@@ -89,7 +89,7 @@ The script performs the following steps:
 
 ---
 
-# Directory Structure
+## Directory Structure
 
 After running the script, the output looks like:
 
@@ -111,9 +111,9 @@ project/
 
 ---
 
-# Input Data Requirements
+## Input Data Requirements
 
-## Flow Cytometry Data
+### Flow Cytometry Data
 
 The script expects:
 
@@ -130,11 +130,9 @@ Each CSV should contain **numeric flow cytometry features** such as:
 * Fluorescence channels
 * Derived cytometry measurements
 
-Each row corresponds to a **single event**.
-
 ---
 
-## Metadata Files
+### Metadata Files
 
 Two metadata tables are required:
 
@@ -161,7 +159,7 @@ sample,isolate
 
 ---
 
-# Configuration
+## Configuration
 
 Edit these variables in `main()`:
 
@@ -180,21 +178,18 @@ These control:
 
 ---
 
-# Installation
+## Installation
 
-## Requirements
-
-Python 3.9+ recommended.
-
-Install dependencies:
+Install the conda environment:
 
 ```bash
-pip install numpy pandas scikit-learn joblib
+conda env create --name mlflow --file mlflow.yaml
+conda activate mlflow
 ```
 
 ---
 
-# Running the Training
+## Running the Training
 
 Run the script:
 
@@ -210,7 +205,7 @@ Output:
 
 ---
 
-# Output Metrics
+## Output Metrics
 
 For each isolate pair, the script reports:
 
@@ -234,7 +229,7 @@ This helps identify:
 
 ---
 
-# Model Ensemble Strategy
+## Model Ensemble Strategy
 
 Each pairwise classifier is an ensemble of:
 
@@ -253,7 +248,7 @@ This improves robustness compared to a single model.
 
 ---
 
-# Feature Engineering Details
+## Feature Engineering Details
 
 For each cytometry parameter:
 
@@ -265,13 +260,11 @@ log_feature
 sqrt_feature
 ```
 
-Log features automatically handle negative values using offsets.
-
-All features are standardized before modeling.
+Log features automatically handle negative values using offsets. All features are standardized before modeling.
 
 ---
 
-# Statistical Output
+## Statistical Output
 
 The file:
 
@@ -281,8 +274,8 @@ all_pairwise_stats.csv
 
 Contains:
 
-| class_1 | class_2 | isolate | balanced_accuracy | f1_score | auc |
-| ------- | ------- | ------- | ----------------- | -------- | --- |
+| class_1 | class_2 | balanced_accuracy | f1_score | auc |
+| ------- | ------- | ----------------- | -------- | --- |
 
 This file is useful for:
 
@@ -293,7 +286,7 @@ This file is useful for:
 
 ---
 
-# Reproducibility
+## Reproducibility
 
 Random seeds are fixed throughout the pipeline:
 
@@ -305,20 +298,7 @@ This ensures reproducible training runs.
 
 ---
 
-# Potential Improvements
-
-Possible future extensions:
-
-* SHAP feature importance analysis
-* GPU-based models
-* XGBoost / LightGBM integration
-* Hyperparameter optimization
-* Multiclass classifier comparison
-* Domain adaptation between experiments
-
----
-
-# Citation / Usage
+## Citation / Usage
 
 If you use this pipeline in a publication or project, please cite the repository or mention the workflow for:
 
