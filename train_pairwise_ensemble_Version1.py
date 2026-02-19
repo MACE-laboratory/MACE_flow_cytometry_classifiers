@@ -424,11 +424,11 @@ def main():
     print("=" * 70)
     
     # -------------------------
-    # Configuration
+    # Configuration, here example with multiple files
     # -------------------------
-    metadata_path_16 = "/Users/massimobourquin/Documents/MACE/AL_flow_cytometry/16012026_FC_dilutions.csv"
-    metadata_path_29 = "/Users/massimobourquin/Documents/MACE/AL_flow_cytometry/23012026_FC_dilutions.csv"
-    data_dir = "/Users/massimobourquin/Documents/MACE/AL_flow_cytometry/data"
+    metadata_path_16 = "./data/16012026_FC_dilutions.csv"
+    metadata_path_29 = "./data/23012026_FC_dilutions.csv"
+    data_dir = "./data/isolates_flow_cytometry"
     remove_list = ["isolate_58", "isolate_25"]
     
     # -------------------------
