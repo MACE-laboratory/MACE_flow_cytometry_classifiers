@@ -183,7 +183,7 @@ These control:
 Install the conda environment:
 
 ```bash
-conda env create --name mlflow --file mlflow.yaml
+conda env create --name mlflow --file=mlflow.yaml
 conda activate mlflow
 ```
 
