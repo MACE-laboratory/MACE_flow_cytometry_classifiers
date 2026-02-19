@@ -1,5 +1,5 @@
 # Flow Cytometry Isolate Classifiers
-### Author: Massimo Bourquin, February 2026
+Author: Massimo Bourquin, February 2026
 
 This project trains **pairwise ensemble classifiers** to distinguish between microbial isolates using flow cytometry measurements.
 For every pair of isolates, the script builds an ensemble of the best-performing models and evaluates them on a held-out test set.
@@ -183,7 +183,7 @@ These control:
 Install the conda environment:
 
 ```bash
-conda env create --name mlflow --file mlflow.yaml
+conda env create --name mlflow --file=mlflow.yaml
 conda activate mlflow
 ```
 
