@@ -6,4 +6,4 @@ dependencies:
   - numpy
   - scikit-learn=1.8.0
   - pandas
-prefix: /mabourqu/home/anaconda3/envs/mlflow
+prefix: /usr/home/anaconda3/envs/mlflow
