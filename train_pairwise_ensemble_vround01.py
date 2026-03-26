@@ -19,71 +19,106 @@ import re
 # DATA LOADING AND PREPARATION FUNCTIONS
 # =========================================================
 
-def load_and_combine_data(metadata_path_16, metadata_path_29, data_dir, negative_labels=("mq", "mq+", "pbs", "pbs+")):
-    """Load all CSV files from data directory and combine with metadata."""
-    
-    # Load metadata CSVs
-    meta_16 = pd.read_csv(metadata_path_16)
-    meta_29 = pd.read_csv(metadata_path_29)
+import os
+import re
+import pandas as pd
 
-    # Find all CSV files
-    csv_files = glob.glob(f"{data_dir}/*.csv")
-    all_samples = []
+import os
+import re
+import pandas as pd
 
-    for csv_path in csv_files:
-        print(f"Processing: {csv_path}")
-        filename = os.path.basename(csv_path)
+def load_and_combine_data():
+    """
+    Loads all per-well monoculture CSVs in all ../data/round01/XXX2026/ subfolders.
+    Returns a single dataframe concatenating all monocultures data with additional columns,
+    and applies one-hot encoding to Temp, Day, isolate (isolate name for each row).
+    """
+    # Load metadata (mono & pair info)
+    metadata = pd.read_csv("../data/round01/all_metadata.csv")
 
-        # Determine metadata table and regex based on prefix
-        if filename.startswith("16"):
-            meta = meta_16
-            pattern = r"isolates_(.*?)_"  # 16 format
-        elif filename.startswith("29"):
-            meta = meta_29
-            pattern = r"OD_diluted_(.*?)_"  # 29 format
-        else:
-            print(f"  Skipping {filename}: cannot determine metadata table")
+    # File pattern for per-well csvs
+    round01_dir = "../data/round01"
+    filename_re = re.compile(
+        r"(round\d+)_(\d+C)_(d\d+)_([0-9.]+)_([A-H][0-9]+)_([^\.]+)\.csv"
+    )
+
+    # Load pairs_to_wells.csv (in round01 dir)
+    pairs_to_wells = pd.read_csv("../data/round01/pairs_to_wells.csv"))
+
+    # Find all monoculture rows in the metadata
+    mono_meta = metadata[metadata["Type"] == "mono"]
+    # Map Community to Isolate for convenience
+    community_to_isolate = dict(zip(mono_meta["Community"], mono_meta["IsolateA"]))
+
+    # Crawl all round01/*2026/ folders and collect CSVs
+    csv_records = []
+    for folder in os.listdir(round01_dir):
+        if not folder.endswith("2026"):
             continue
-
-        # Build mapping: sample -> isolate
-        sample_to_isolate = dict(zip(meta["sample"].astype(str), meta["isolate"].astype(str)))
-
-        # Extract sample ID
-        match = re.search(pattern, filename)
-        if not match:
-            print(f"  Could not extract sample from {filename}")
+        folder_path = os.path.join(round01_dir, folder)
+        if not os.path.isdir(folder_path):
             continue
+        for fname in os.listdir(folder_path):
+            if not fname.lower().endswith('.csv'):
+                continue
+            match = filename_re.match(fname)
+            if not match:
+                continue
+            round_n, temp, day, date, well, sample = match.groups()
+            csv_records.append({
+                "filepath": os.path.join(folder_path, fname),
+                "filename": fname,
+                "Round": round_n,
+                "Temp": temp,
+                "Day": day,
+                "Date": date,
+                "Well": well,
+                "Sample": sample,
+                "Folder": folder,
+            })
 
-        sample_id = match.group(1)
+    # Assign Community ID to each csv_record using Well, Day, Round from pairs_to_wells
+    for rec in csv_records:
+        day_int = int(rec["Day"][1:])  # 'd01' -> 1
+        well = rec["Well"]
+        round_val = rec["Round"]
+        match_rows = pairs_to_wells[
+            (pairs_to_wells["Well"] == well) &
+            (pairs_to_wells["Day"] == day_int) &
+            (pairs_to_wells["Round"] == round_val)
+        ]
+        rec["Community"] = match_rows["Community"].iloc[0] if not match_rows.empty else None
 
-        # Map to isolate name
-        isolate_name = sample_to_isolate.get(sample_id)
-        if isolate_name is None:
-            print(f"  No metadata entry for sample {sample_id} in {filename}")
-            continue
+    # Filter to only monoculture csvs (Community in community_to_isolate.keys())
+    monoculture_csvs = [rec for rec in csv_records if rec["Community"] in community_to_isolate]
 
-        # Determine isolate label
-        if isolate_name.lower().startswith(negative_labels):
-            isolate_label = "Negatives"
-        else:
-            isolate_label = f"isolate_{isolate_name}"
-
-        # Load CSV
-        df = pd.read_csv(csv_path)
-
-        # Add metadata columns
+    # Load, annotate, and collect all monoculture data
+    dfs = []
+    for rec in monoculture_csvs:
+        df = pd.read_csv(rec["filepath"])
+        isolate_label = community_to_isolate[rec["Community"]]
+        sample_id = rec["Sample"]
+        filename = rec["filename"]
+        # Add key columns
+        df["Temp"] = rec["Temp"]
+        df["Day"] = rec["Day"]
+        df["Date"] = rec["Date"]
+        df["Well"] = rec["Well"]
         df["filename"] = filename
         df["isolate"] = isolate_label
         df["sample"] = sample_id
+        dfs.append(df)
 
-        all_samples.append(df)
+    # Concatenate all
+    if not dfs:
+        raise RuntimeError("No monoculture data found matching the metadata and pairs_to_wells mapping.")
+    combined_df = pd.concat(dfs, ignore_index=True)
 
-    # Concatenate all files
-    combined_df = pd.concat(all_samples, ignore_index=True)
-    print(f"Combined shape: {combined_df.shape}")
-    
+    # One-hot encode categorical columns
+    categorical_cols = ["Temp", "Day", "isolate"]
+    combined_df = pd.get_dummies(combined_df, columns=categorical_cols)
+
     return combined_df
-
 
 def remove_low_count_isolates(df, remove_list):
     """Remove isolates with low counts."""
@@ -424,18 +459,10 @@ def main():
     print("=" * 70)
     
     # -------------------------
-    # Configuration, here example with multiple files
-    # -------------------------
-    metadata_path_16 = "./data/16012026_FC_dilutions.csv"
-    metadata_path_29 = "./data/23012026_FC_dilutions.csv"
-    data_dir = "./data/isolates_flow_cytometry"
-    remove_list = ["isolate_58", "isolate_25"]
-    
-    # -------------------------
     # Data Loading and Preparation
     # -------------------------
     print("\n1. Loading data...")
-    combined_df = load_and_combine_data(metadata_path_16, metadata_path_29, data_dir)
+    combined_df = load_and_combine_data()
     
     print("\n2. Removing low-count isolates...")
     combined_df = remove_low_count_isolates(combined_df, remove_list)
