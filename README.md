@@ -13,7 +13,7 @@ The pipeline includes:
 * Feature selection via point-biserial correlation
 * Evaluation of multiple machine learning models
 * Ensemble creation using the top-performing models
-* Saving trained models and performance statistics
+* Saving trained models and performance statistics on test set
 
 ---
 
