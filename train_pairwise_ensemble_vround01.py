@@ -438,7 +438,7 @@ def train_and_evaluate_pair(cls1, cls2, X_train, y_train, X_test, y_test, featur
 
 def save_pair_models(cls1, cls2, pair_result):
     """Save trained models and metadata for a pairwise comparison."""
-    pair_dir = f"models/{cls1}_vs_{cls2}"
+    pair_dir = f"round01_models/{cls1}_vs_{cls2}"
     os.makedirs(pair_dir, exist_ok=True)
 
     # Save the 5 base models with their feature sets
