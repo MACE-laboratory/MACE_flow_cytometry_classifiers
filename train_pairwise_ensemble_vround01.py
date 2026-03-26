@@ -43,7 +43,7 @@ def load_and_combine_data():
     )
 
     # Load pairs_to_wells.csv (in round01 dir)
-    pairs_to_wells = pd.read_csv("../data/round01/pairs_to_wells.csv"))
+    pairs_to_wells = pd.read_csv("../data/round01/pairs_to_wells.csv")
 
     # Find all monoculture rows in the metadata
     mono_meta = metadata[metadata["Type"] == "mono"]
