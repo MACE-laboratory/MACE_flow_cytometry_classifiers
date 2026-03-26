@@ -161,61 +161,41 @@ def clean_with_isolation_forest(df, numeric_cols, contamination=0.05, random_sta
     
     return combined_clean
 
-
-import numpy as np
-import pandas as pd
-from sklearn.preprocessing import StandardScaler
-
-def create_train_test_splits(df, numeric_cols, random_state=23):
-    """Create train/test splits with feature engineering and standardization, done separately for train and test."""
-    
-    # Step 1: Remove Negatives & stratified sample per isolate up to 12k
+def create_train_test_splits(df, numeric_cols, random_state=23, n_train=20000, n_test=5000):
+    """
+    Create train/test splits with feature engineering and standardization.
+    Always sample exactly n_train for train and n_test for test per isolate.
+    """
+    # Step 1: Remove Negatives
     df_filtered = df[df["isolate"] != "Negatives"].copy()
-    
-    df_sampled = (
-        df_filtered.groupby("isolate", group_keys=False)
-        .apply(lambda g: g.sample(n=min(len(g), 12000), random_state=random_state))
-        .reset_index(drop=True)
-    )
 
-    # Step 2: Split into train (10k) and test (2k) per isolate
+    # Step 2: Sample n_train+n_test per isolate
     train_list, test_list = [], []
-    for iso, g in df_sampled.groupby("isolate"):
+    for iso, g in df_filtered.groupby("isolate"):
         g = g.sample(frac=1, random_state=random_state).reset_index(drop=True)  # shuffle
-        n_train = min(10000, int(len(g) * 10 / 12))
-        n_test = min(2000, len(g) - n_train)
+        if len(g) < (n_train + n_test):
+            raise ValueError(f"Not enough data for isolate {iso}: found {len(g)}, require {n_train + n_test}")
         train_list.append(g.iloc[:n_train])
         test_list.append(g.iloc[n_train:n_train+n_test])
 
     df_train = pd.concat(train_list, ignore_index=True)
     df_test = pd.concat(test_list, ignore_index=True)
 
-    # Step 3: Feature engineering on train & test separately
-    def feature_eng(X):
+    # Step 3: Feature engineering (with safe clipping)
+    def feature_eng(X, log_offsets):
         X_feat = X[numeric_cols].copy()
-        # Compute log offsets on train
-        log_offsets = {col: -X_feat[col].min() if X_feat[col].min() < 0 else 0 for col in numeric_cols}
         for col in numeric_cols:
             offset = log_offsets[col]
-            if offset > 0:
-                X_feat[f"{col}_log"] = np.log1p(X_feat[col] + offset)
-            else:
-                X_feat[f"{col}_log"] = np.log1p(X_feat[col])
+            X_feat[f"{col}_log"] = np.log1p(np.clip(X_feat[col] + offset, 0, None))
             X_feat[f"{col}_sqrt"] = np.sqrt(np.clip(X_feat[col], 0, None))
-        return X_feat, log_offsets
+        return X_feat
 
-    X_train_feat, train_log_offsets = feature_eng(df_train)
-    X_test_feat = df_test[numeric_cols].copy()
-    # Use train's log offsets on test set!
-    for col in numeric_cols:
-        offset = train_log_offsets[col]
-        if offset > 0:
-            X_test_feat[f"{col}_log"] = np.log1p(X_test_feat[col] + offset)
-        else:
-            X_test_feat[f"{col}_log"] = np.log1p(X_test_feat[col])
-        X_test_feat[f"{col}_sqrt"] = np.sqrt(np.clip(X_test_feat[col], 0, None))
-    
-    # Step 4: Standardize on train, apply to test (fit only on train)
+    # Compute log offsets on train set only
+    train_log_offsets = {col: -df_train[col].min() if df_train[col].min() < 0 else 0 for col in numeric_cols}
+    X_train_feat = feature_eng(df_train, train_log_offsets)
+    X_test_feat = feature_eng(df_test, train_log_offsets)
+
+    # Step 4: Standardize on train, apply to test
     scaler = StandardScaler()
     X_train_scaled = pd.DataFrame(
         scaler.fit_transform(X_train_feat),
@@ -226,7 +206,7 @@ def create_train_test_splits(df, numeric_cols, random_state=23):
         columns=X_test_feat.columns, index=X_test_feat.index
     )
 
-    # Step 5: Add back isolate labels
+    # Step 5: Add isolate labels
     df_train_final = X_train_scaled.copy()
     df_train_final["isolate"] = df_train["isolate"].values
     df_test_final = X_test_scaled.copy()
