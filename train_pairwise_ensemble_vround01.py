@@ -162,103 +162,82 @@ def clean_with_isolation_forest(df, numeric_cols, contamination=0.05, random_sta
     return combined_clean
 
 
+import numpy as np
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+
 def create_train_test_splits(df, numeric_cols, random_state=23):
-    """Create train/test splits with feature engineering and standardization."""
+    """Create train/test splits with feature engineering and standardization, done separately for train and test."""
     
-    # Step 1: Data preparation
-    X_raw = df[numeric_cols]
-    y = df["isolate"]
-
-    # Step 2: Sample 12k per isolate
-    df_all = X_raw.copy()
-    df_all["isolate"] = y
-
-    sampled_dfs = []
-    for isolate_label, group in df_all.groupby("isolate"):
-        n_samples = min(len(group), 12000)
-        sampled_group = group.sample(n=n_samples, random_state=random_state)
-        sampled_dfs.append(sampled_group)
-
-    df_sampled = pd.concat(sampled_dfs).reset_index(drop=True)
-    X_raw = df_sampled.drop(columns="isolate")
-    y = df_sampled["isolate"]
-
-    # Step 3: Feature transformations
-    X_all = pd.DataFrame(index=X_raw.index)
-
-    # Compute offsets dynamically
-    log_offsets = {}
-    for col in numeric_cols:
-        min_val = X_raw[col].min()
-        log_offsets[col] = -min_val if min_val < 0 else 0
-
-    for col in numeric_cols:
-        x = X_raw[col]
-        X_all[col] = x
-        if log_offsets[col] > 0:
-            X_all[f"{col}_log"] = np.log1p(x + log_offsets[col])
-        X_all[f"{col}_sqrt"] = np.sqrt(np.clip(x, 0, None))
-
-    # Step 4: Standardize all features
-    scaler = StandardScaler()
-    X_all_scaled = pd.DataFrame(
-        scaler.fit_transform(X_all),
-        columns=X_all.columns,
-        index=X_all.index
+    # Step 1: Remove Negatives & stratified sample per isolate up to 12k
+    df_filtered = df[df["isolate"] != "Negatives"].copy()
+    
+    df_sampled = (
+        df_filtered.groupby("isolate", group_keys=False)
+        .apply(lambda g: g.sample(n=min(len(g), 12000), random_state=random_state))
+        .reset_index(drop=True)
     )
 
-    # Step 5: Filter to real isolates only (remove Negatives)
-    real_isolate_mask = y != "Negatives"
-    X_filtered = X_all_scaled[real_isolate_mask]
-    y_filtered = y[real_isolate_mask]
+    # Step 2: Split into train (10k) and test (2k) per isolate
+    train_list, test_list = [], []
+    for iso, g in df_sampled.groupby("isolate"):
+        g = g.sample(frac=1, random_state=random_state).reset_index(drop=True)  # shuffle
+        n_train = min(10000, int(len(g) * 10 / 12))
+        n_test = min(2000, len(g) - n_train)
+        train_list.append(g.iloc[:n_train])
+        test_list.append(g.iloc[n_train:n_train+n_test])
 
-    # Step 6: Stratified train/test split (10k train, 2k test per isolate)
-    train_dfs = []
-    test_dfs = []
+    df_train = pd.concat(train_list, ignore_index=True)
+    df_test = pd.concat(test_list, ignore_index=True)
 
-    for isolate_label in y_filtered.unique():
-        mask = y_filtered == isolate_label
-        X_iso = X_filtered[mask]
-        
-        # Sample up to 12k total (10k train + 2k test)
-        if len(X_iso) > 12000:
-            X_iso = X_iso.sample(n=12000, random_state=random_state)
-        
-        # Split into 10k train, 2k test
-        n_train = min(10000, int(len(X_iso) * 10/12))
-        n_test = min(2000, len(X_iso) - n_train)
-        
-        X_iso_train = X_iso.iloc[:n_train]
-        X_iso_test = X_iso.iloc[n_train:n_train + n_test]
-        
-        train_dfs.append(X_iso_train)
-        test_dfs.append(X_iso_test)
+    # Step 3: Feature engineering on train & test separately
+    def feature_eng(X):
+        X_feat = X[numeric_cols].copy()
+        # Compute log offsets on train
+        log_offsets = {col: -X_feat[col].min() if X_feat[col].min() < 0 else 0 for col in numeric_cols}
+        for col in numeric_cols:
+            offset = log_offsets[col]
+            if offset > 0:
+                X_feat[f"{col}_log"] = np.log1p(X_feat[col] + offset)
+            else:
+                X_feat[f"{col}_log"] = np.log1p(X_feat[col])
+            X_feat[f"{col}_sqrt"] = np.sqrt(np.clip(X_feat[col], 0, None))
+        return X_feat, log_offsets
 
-    # Combine all isolates
-    X_train = pd.concat(train_dfs).reset_index(drop=True)
-    X_test = pd.concat(test_dfs).reset_index(drop=True)
-
-    # Get corresponding labels
-    y_train = pd.concat([y_filtered[y_filtered == isolate].iloc[:len(train_dfs[i])] 
-                          for i, isolate in enumerate(y_filtered.unique())]
-                         ).reset_index(drop=True)
-    y_test = pd.concat([y_filtered[y_filtered == isolate].iloc[len(train_dfs[i]):len(train_dfs[i]) + len(test_dfs[i])] 
-                         for i, isolate in enumerate(y_filtered.unique())]
-                        ).reset_index(drop=True)
-
-    # Final dataframes
-    df_train = X_train.copy()
-    df_train["isolate"] = y_train.values
-
-    df_test = X_test.copy()
-    df_test["isolate"] = y_test.values
-
-    print(f"Training set: {df_train.shape}")
-    print(f"Test set: {df_test.shape}")
-    print(f"\nTraining set isolates:\n{df_train['isolate'].value_counts()}")
-    print(f"\nTest set isolates:\n{df_test['isolate'].value_counts()}")
+    X_train_feat, train_log_offsets = feature_eng(df_train)
+    X_test_feat = df_test[numeric_cols].copy()
+    # Use train's log offsets on test set!
+    for col in numeric_cols:
+        offset = train_log_offsets[col]
+        if offset > 0:
+            X_test_feat[f"{col}_log"] = np.log1p(X_test_feat[col] + offset)
+        else:
+            X_test_feat[f"{col}_log"] = np.log1p(X_test_feat[col])
+        X_test_feat[f"{col}_sqrt"] = np.sqrt(np.clip(X_test_feat[col], 0, None))
     
-    return df_train, df_test, scaler
+    # Step 4: Standardize on train, apply to test (fit only on train)
+    scaler = StandardScaler()
+    X_train_scaled = pd.DataFrame(
+        scaler.fit_transform(X_train_feat),
+        columns=X_train_feat.columns, index=X_train_feat.index
+    )
+    X_test_scaled = pd.DataFrame(
+        scaler.transform(X_test_feat),
+        columns=X_test_feat.columns, index=X_test_feat.index
+    )
+
+    # Step 5: Add back isolate labels
+    df_train_final = X_train_scaled.copy()
+    df_train_final["isolate"] = df_train["isolate"].values
+    df_test_final = X_test_scaled.copy()
+    df_test_final["isolate"] = df_test["isolate"].values
+
+    print(f"Training set: {df_train_final.shape}")
+    print(f"Test set: {df_test_final.shape}")
+    print(f"\nTraining set isolates:\n{df_train_final['isolate'].value_counts()}")
+    print(f"\nTest set isolates:\n{df_test_final['isolate'].value_counts()}")
+
+    return df_train_final, df_test_final, scaler
 
 
 # =========================================================
