@@ -33,6 +33,10 @@ def load_and_combine_data():
     Returns a single dataframe concatenating all monocultures data with additional columns,
     and applies one-hot encoding to Temp, Day, isolate (isolate name for each row).
     """
+    import os
+    import re
+    import pandas as pd
+
     # Load metadata (mono & pair info)
     metadata = pd.read_csv("../data/round01/all_metadata.csv")
 
@@ -44,6 +48,10 @@ def load_and_combine_data():
 
     # Load pairs_to_wells.csv (in round01 dir)
     pairs_to_wells = pd.read_csv("../data/round01/pairs_to_wells.csv")
+
+    # Make sure Day in pairs_to_wells is formatted as "dXX" (e.g. "d03")
+    pairs_to_wells['Day'] = pairs_to_wells['Day'].astype(str).str.zfill(2)
+    pairs_to_wells['Day'] = 'd' + pairs_to_wells['Day'].str[-2:]
 
     # Find all monoculture rows in the metadata
     mono_meta = metadata[metadata["Type"] == "mono"]
@@ -79,15 +87,21 @@ def load_and_combine_data():
 
     # Assign Community ID to each csv_record using Well, Day, Round from pairs_to_wells
     for rec in csv_records:
-        day_int = int(rec["Day"][1:])  # 'd01' -> 1
+        day_str = rec["Day"]   # e.g., "d03"
         well = rec["Well"]
         round_val = rec["Round"]
-        match_rows = pairs_to_wells[
+        matches = pairs_to_wells[
             (pairs_to_wells["Well"] == well) &
-            (pairs_to_wells["Day"] == day_int) &
+            (pairs_to_wells["Day"] == day_str) &
             (pairs_to_wells["Round"] == round_val)
-        ]
-        rec["Community"] = match_rows["Community"].iloc[0] if not match_rows.empty else None
+        ]["Community"].unique()
+        if len(matches) == 1:
+            rec["Community"] = matches[0]
+        elif len(matches) == 0:
+            rec["Community"] = None
+            print(f"Warning: No Community match for Well={well}, Day={day_str}, Round={round_val}")
+        else:
+            raise ValueError(f"Multiple communities found for Well={well}, Day={day_str}, Round={round_val}: {matches}")
 
     # Filter to only monoculture csvs (Community in community_to_isolate.keys())
     monoculture_csvs = [rec for rec in csv_records if rec["Community"] in community_to_isolate]
@@ -115,7 +129,7 @@ def load_and_combine_data():
     combined_df = pd.concat(dfs, ignore_index=True)
 
     # One-hot encode categorical columns
-    categorical_cols = ["Temp", "Day", "isolate"]
+    categorical_cols = ["Temp", "Day"]
     combined_df = pd.get_dummies(combined_df, columns=categorical_cols)
 
     return combined_df
@@ -463,8 +477,12 @@ def main():
     # -------------------------
     print("\n1. Loading data...")
     combined_df = load_and_combine_data()
+    print(combined_df.shape)
+    print(combined_df.columns)
+    print(combined_df.groupby("isolate").size())
     
     print("\n2. Removing low-count isolates...")
+    remove_list = []
     combined_df = remove_low_count_isolates(combined_df, remove_list)
     
     print("\n3. Cleaning with Isolation Forest...")
@@ -545,7 +563,7 @@ def main():
     # -------------------------
     print("\n6. Saving statistics...")
     stats_df = pd.DataFrame(all_stats)
-    stats_df.to_csv("all_pairwise_stats.csv", index=False)
+    stats_df.to_csv("all_pairwise_stats_round01.csv", index=False)
     print(f"✓ Statistics saved to all_pairwise_stats.csv")
     
     # -------------------------
