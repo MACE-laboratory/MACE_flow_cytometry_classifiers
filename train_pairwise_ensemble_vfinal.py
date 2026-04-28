@@ -340,12 +340,19 @@ def main():
 
         save_pair_models(cls1, cls2, pair_result, models_root=models_root)
 
+        pc = pair_result["per_class"]
         all_stats.append({
             "class_1": cls1,
             "class_2": cls2,
-            "balanced_accuracy": pair_result["pair_balanced_accuracy"],
-            "f1_score": pair_result["pair_f1"],
-            "auc": pair_result["pair_auc"],
+            "pair_balanced_accuracy": pair_result["pair_balanced_accuracy"],
+            "pair_f1": pair_result["pair_f1"],
+            "pair_auc": pair_result["pair_auc"],
+            "balanced_accuracy_Isolate_A": pc[cls1]["balanced_accuracy"],
+            "balanced_accuracy_Isolate_B": pc[cls2]["balanced_accuracy"],
+            "AUC_Isolate_A": pc[cls1]["auc"],
+            "AUC_Isolate_B": pc[cls2]["auc"],
+            "F1_Isolate_A": pc[cls1]["f1"],
+            "F1_Isolate_B": pc[cls2]["f1"],
         })
         print(f"  ✓ {cls1} vs {cls2}  ba={pair_result['pair_balanced_accuracy']:.3f}")
 
