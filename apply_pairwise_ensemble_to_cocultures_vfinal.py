@@ -99,12 +99,13 @@ def class_probability_totals(probs_by_model: list, class_names: list):
     class_names: list of class labels (length = n_classes)
 
     Returns:
-        dict: {class_name: total summed probability across dataset}
+        dict: {class_name: total averaged probability across dataset}
     """
     mat = np.stack(probs_by_model)        # (n_models, n_rows, n_classes)
-    summed = np.sum(mat, axis=0)          # (n_rows, n_classes)
     
-    totals = np.sum(summed, axis=0)       # (n_classes,)
+    mean_probs = np.mean(mat, axis=0)     # average over models → (n_rows, n_classes)
+    
+    totals = np.sum(mean_probs, axis=0)   # sum over rows → (n_classes,)
     
     return dict(zip(class_names, totals))
 
