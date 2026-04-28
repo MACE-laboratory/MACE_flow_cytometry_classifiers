@@ -93,6 +93,21 @@ def majority_vote(preds_by_model: list) -> np.ndarray:
         out.append(vals[np.argmax(counts)])
     return np.array(out)
 
+def class_probability_totals(probs_by_model: list, class_names: list):
+    """
+    probs_by_model: list of (n_rows, n_classes)
+    class_names: list of class labels (length = n_classes)
+
+    Returns:
+        dict: {class_name: total summed probability across dataset}
+    """
+    mat = np.stack(probs_by_model)        # (n_models, n_rows, n_classes)
+    summed = np.sum(mat, axis=0)          # (n_rows, n_classes)
+    
+    totals = np.sum(summed, axis=0)       # (n_classes,)
+    
+    return dict(zip(class_names, totals))
+
 def resolve_pair_dir(models_root: str, isolate_A: str, isolate_B: str):
     d1 = os.path.join(models_root, f"{isolate_A}_vs_{isolate_B}")
     d2 = os.path.join(models_root, f"{isolate_B}_vs_{isolate_A}")
@@ -131,26 +146,22 @@ def apply_pair_model_to_well(X_scaled: pd.DataFrame, isolate_A: str, isolate_B: 
         preds_by_model.append(model.predict(X_scaled[feats]))
 
     y_pred = majority_vote(preds_by_model)
+    y_proba = class_probability_totals(preds_by_model)
 
     count_A = int(np.sum(y_pred == isolate_A))
     count_B = int(np.sum(y_pred == isolate_B))
+    summed_proba_A = int(y_proba[isolate_A])
+    summed_proba_B = int(y_proba[isolate_B])
     N = int(len(y_pred))
-
-    pA = count_A / N if N else np.nan
-    se_pA = np.sqrt(pA * (1 - pA) / N) if N else np.nan
-    se_count_A = se_pA * N if N else np.nan
-    se_count_B = se_count_A
 
     return {
         "isolate_A": isolate_A,
         "isolate_B": isolate_B,
         "count_A": count_A,
         "count_B": count_B,
+        "summed_proba_A": summed_proba_A,
+        "summed_proba_B": summed_proba_B, 
         "N": N,
-        "p_A": pA,
-        "se_p_A": se_pA,
-        "se_count_A": se_count_A,
-        "se_count_B": se_count_B,
         "model_dir": os.path.basename(pair_dir),
     }
 
