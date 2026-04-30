@@ -27,13 +27,13 @@ def load_and_combine_data(r: int):
     """Load monoculture CSVs for the given round number (1, 2, …)."""
     nn = f"{r:02d}"
     data_dir = f"../data/round{nn}"
-    metadata_path = os.path.join(data_dir, "all_metadata.csv").drop_duplicates()
-    pairs_to_wells_path = os.path.join(data_dir, "pairs_to_wells.csv").drop_duplicates()
+    metadata_path = os.path.join(data_dir, "all_metadata.csv")
+    pairs_to_wells_path = os.path.join(data_dir, "pairs_to_wells.csv")
     # non-zero-padded round string used in filenames, e.g. "round1"
     round_prefix = f"round{r}"
 
-    metadata = pd.read_csv(metadata_path)
-    pairs_to_wells = pd.read_csv(pairs_to_wells_path)
+    metadata = pd.read_csv(metadata_path).drop_duplicates()
+    pairs_to_wells = pd.read_csv(pairs_to_wells_path).drop_duplicates()
 
     pairs_to_wells["Round"] = pairs_to_wells["Round"].apply(normalize_round_str)
     pairs_to_wells["Day"] = pairs_to_wells["Day"].astype(str).str.zfill(2)
