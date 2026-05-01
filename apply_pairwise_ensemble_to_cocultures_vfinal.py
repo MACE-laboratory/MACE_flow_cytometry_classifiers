@@ -7,10 +7,12 @@ import joblib
 
 FILENAME_RE = re.compile(r"(round\d+)_(\d+C)_(d\d+)_([0-9.]+)_([A-H][0-9]+)_([^\.]+)\.csv")
 
+
 def normalize_round_str(x: str) -> str:
     s = str(x).strip().lower()
     m = re.match(r"^round0*([0-9]+)$", s)
     return f"round{int(m.group(1))}" if m else s
+
 
 def build_csv_index(data_dir: str, round_prefix: str) -> pd.DataFrame:
     """Index per-well CSVs in data_dir/*2026/ that match the given round prefix."""
@@ -43,6 +45,7 @@ def build_csv_index(data_dir: str, round_prefix: str) -> pd.DataFrame:
                 "Folder": folder,
             })
     return pd.DataFrame(rows)
+
 
 def load_pair_wells_index(r: int) -> pd.DataFrame:
     """Return a dataframe of co-culture well CSV records with IsolateA / IsolateB attached."""
@@ -77,6 +80,7 @@ def load_pair_wells_index(r: int) -> pd.DataFrame:
 
     return pair_wells
 
+
 def feature_engineer_raw(df_raw: pd.DataFrame, numeric_cols: list, log_offsets: dict) -> pd.DataFrame:
     X = df_raw[numeric_cols].copy()
     for col in numeric_cols:
@@ -84,6 +88,7 @@ def feature_engineer_raw(df_raw: pd.DataFrame, numeric_cols: list, log_offsets: 
         X[f"{col}_log"] = np.log1p(np.clip(X[col] + off, 0, None))
         X[f"{col}_sqrt"] = np.sqrt(np.clip(X[col], 0, None))
     return X
+
 
 def majority_vote(preds_by_model: list) -> np.ndarray:
     mat = np.vstack(preds_by_model)  # (n_models, n_rows)
@@ -93,21 +98,21 @@ def majority_vote(preds_by_model: list) -> np.ndarray:
         out.append(vals[np.argmax(counts)])
     return np.array(out)
 
-def class_probability_totals(probs_by_model: list, class_names: list):
-    """
+
+def class_probability_totals(probs_by_model: list, class_names: list) -> dict:
+    """Aggregate probabilities across models and rows.
+
     probs_by_model: list of (n_rows, n_classes)
     class_names: list of class labels (length = n_classes)
 
     Returns:
-        dict: {class_name: total averaged probability across dataset}
+        dict: {class_name: sum of averaged probabilities across rows}
     """
-    mat = np.stack(probs_by_model)        # (n_models, n_rows, n_classes)
-    
-    mean_probs = np.mean(mat, axis=0)     # average over models → (n_rows, n_classes)
-    
-    totals = np.sum(mean_probs, axis=0)   # sum over rows → (n_classes,)
-    
+    mat = np.stack(probs_by_model)         # (n_models, n_rows, n_classes)
+    mean_probs = np.mean(mat, axis=0)      # (n_rows, n_classes)
+    totals = np.sum(mean_probs, axis=0)    # (n_classes,)
     return dict(zip(class_names, totals))
+
 
 def resolve_pair_dir(models_root: str, isolate_A: str, isolate_B: str):
     d1 = os.path.join(models_root, f"{isolate_A}_vs_{isolate_B}")
@@ -117,6 +122,7 @@ def resolve_pair_dir(models_root: str, isolate_A: str, isolate_B: str):
     if os.path.isdir(d2):
         return d2
     return None
+
 
 def apply_pair_model_to_well(X_scaled: pd.DataFrame, isolate_A: str, isolate_B: str, models_root: str) -> dict:
     pair_dir = resolve_pair_dir(models_root, isolate_A, isolate_B)
@@ -129,6 +135,8 @@ def apply_pair_model_to_well(X_scaled: pd.DataFrame, isolate_A: str, isolate_B: 
     model_specs = meta["models"]  # list of (name, n_features)
 
     preds_by_model = []
+    probas_by_model = []
+
     for model_name, n_features in model_specs:
         model_path = os.path.join(pair_dir, f"{model_name}_top{n_features}.pkl")
         feat_path = os.path.join(pair_dir, f"{model_name}_top{n_features}_features.pkl")
@@ -144,35 +152,46 @@ def apply_pair_model_to_well(X_scaled: pd.DataFrame, isolate_A: str, isolate_B: 
                 f"Example missing: {missing[:10]}"
             )
 
-        preds_by_model.append(model.predict(X_scaled[feats]))
+        X_sel = X_scaled[feats]
+        preds_by_model.append(model.predict(X_sel))
+
+        # probability totals require predict_proba
+        if hasattr(model, "predict_proba"):
+            probas_by_model.append(model.predict_proba(X_sel))
 
     y_pred = majority_vote(preds_by_model)
-    y_proba = class_probability_totals(preds_by_model)
 
     count_A = int(np.sum(y_pred == isolate_A))
     count_B = int(np.sum(y_pred == isolate_B))
-    summed_proba_A = int(y_proba[isolate_A])
-    summed_proba_B = int(y_proba[isolate_B])
     N = int(len(y_pred))
 
-    return {
+    out = {
         "isolate_A": isolate_A,
         "isolate_B": isolate_B,
         "count_A": count_A,
         "count_B": count_B,
-        "summed_proba_A": summed_proba_A,
-        "summed_proba_B": summed_proba_B, 
         "N": N,
         "model_dir": os.path.basename(pair_dir),
     }
+
+    # Optional: summed probabilities (if available)
+    if probas_by_model:
+        # Use model.classes_ ordering; assume consistent across the 5 models
+        class_names = list(getattr(joblib.load(os.path.join(pair_dir, f"{model_specs[0][0]}_top{model_specs[0][1]}.pkl")), "classes_"))
+        totals = class_probability_totals(probas_by_model, class_names)
+        out["summed_proba_A"] = float(totals.get(isolate_A, np.nan))
+        out["summed_proba_B"] = float(totals.get(isolate_B, np.nan))
+
+    return out
+
 
 def run_coculture_inference(r: int) -> pd.DataFrame:
     nn = f"{r:02d}"
     models_root = f"round{nn}_models"
 
-    scaler          = joblib.load(os.path.join(models_root, "scaler.pkl"))
-    log_offsets     = joblib.load(os.path.join(models_root, "log_offsets.pkl"))
-    numeric_cols    = joblib.load(os.path.join(models_root, "numeric_cols.pkl"))
+    scaler = joblib.load(os.path.join(models_root, "scaler.pkl"))
+    log_offsets = joblib.load(os.path.join(models_root, "log_offsets.pkl"))
+    numeric_cols = joblib.load(os.path.join(models_root, "numeric_cols.pkl"))
     engineered_cols = joblib.load(os.path.join(models_root, "engineered_feature_columns.pkl"))
 
     pair_wells = load_pair_wells_index(r)
@@ -185,9 +204,8 @@ def run_coculture_inference(r: int) -> pd.DataFrame:
     for _, rec in pair_wells.iterrows():
         df_raw = pd.read_csv(rec["filepath"])
 
-        # Recreate engineered features exactly as at training time
         X_eng = feature_engineer_raw(df_raw, numeric_cols, log_offsets)
-        X_eng = X_eng[engineered_cols]  # enforce exact column order
+        X_eng = X_eng[engineered_cols]
         X_scaled = pd.DataFrame(
             scaler.transform(X_eng), columns=engineered_cols, index=X_eng.index
         )
@@ -213,9 +231,10 @@ def run_coculture_inference(r: int) -> pd.DataFrame:
 
     df_out = pd.DataFrame(out)
 
-    # Reorder columns: identifiers first, then counts / uncertainty
-    id_cols = ["Round", "Temp", "Day", "Date", "Well", "Sample",
-               "isolate_A", "isolate_B", "count_A", "count_B"]
+    id_cols = [
+        "Round", "Temp", "Day", "Date", "Well", "Sample",
+        "isolate_A", "isolate_B", "count_A", "count_B"
+    ]
     extra_cols = [c for c in df_out.columns if c not in id_cols]
     df_out = df_out[id_cols + extra_cols]
 
@@ -225,12 +244,15 @@ def run_coculture_inference(r: int) -> pd.DataFrame:
 
     return df_out
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Apply saved pairwise ensemble models to co-culture wells."
     )
-    parser.add_argument("-r", "--round", type=int, required=True,
-                        help="Experimental round number (e.g. 1, 2).")
+    parser.add_argument(
+        "-r", "--round", type=int, required=True,
+        help="Experimental round number (e.g. 1, 2)."
+    )
     args = parser.parse_args()
 
     r = args.round
@@ -241,6 +263,7 @@ def main():
     print(f"Saved {out_csv}  (rows={len(df)})")
     if not df.empty:
         print(df.head())
+
 
 if __name__ == "__main__":
     main()
