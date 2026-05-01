@@ -53,10 +53,10 @@ def load_pair_wells_index(r: int) -> pd.DataFrame:
     data_dir = f"../data/round{nn}"
     round_prefix = f"round{r}"
 
-    metadata = pd.read_csv(os.path.join(data_dir, "all_metadata.csv"))
+    metadata = pd.read_csv(os.path.join(data_dir, "all_metadata.csv")).drop_duplicates()
     pair_meta = metadata[metadata["Type"] == "pair"].copy()
 
-    pairs_to_wells = pd.read_csv(os.path.join(data_dir, "pairs_to_wells.csv"))
+    pairs_to_wells = pd.read_csv(os.path.join(data_dir, "pairs_to_wells.csv")).drop_duplicates()
     pairs_to_wells["Round"] = pairs_to_wells["Round"].apply(normalize_round_str)
     pairs_to_wells["Day"] = pairs_to_wells["Day"].astype(str).str.zfill(2)
     pairs_to_wells["Day"] = "d" + pairs_to_wells["Day"].str[-2:]
