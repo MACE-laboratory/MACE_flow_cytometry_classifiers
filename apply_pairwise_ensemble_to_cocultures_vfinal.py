@@ -81,6 +81,58 @@ def load_pair_wells_index(r: int) -> pd.DataFrame:
     return pair_wells
 
 
+def build_mono_event_counts(r: int) -> pd.DataFrame:
+    """Build a lookup table of monoculture event counts keyed by Round/Day/Temp/isolate.
+
+    Matching constraints: Round + Day + Temp (Date is not used).
+
+    Returns columns:
+      Round, Day, Temp, isolate, mono_event_count
+
+    Raises if multiple monoculture CSVs exist for the same key.
+    """
+    nn = f"{r:02d}"
+    data_dir = f"../data/round{nn}"
+    round_prefix = f"round{r}"
+
+    metadata = pd.read_csv(os.path.join(data_dir, "all_metadata.csv")).drop_duplicates()
+    mono_meta = metadata[metadata["Type"] == "mono"].copy()
+
+    # Map Community -> isolate label
+    community_to_isolate = dict(zip(mono_meta["Community"], mono_meta["IsolateA"]))
+
+    pairs_to_wells = pd.read_csv(os.path.join(data_dir, "pairs_to_wells.csv")).drop_duplicates()
+    pairs_to_wells["Round"] = pairs_to_wells["Round"].apply(normalize_round_str)
+    pairs_to_wells["Day"] = pairs_to_wells["Day"].astype(str).str.zfill(2)
+    pairs_to_wells["Day"] = "d" + pairs_to_wells["Day"].str[-2:]
+    pairs_to_wells["Well"] = pairs_to_wells["Well"].astype(str).str.strip()
+
+    csv_index = build_csv_index(data_dir, round_prefix)
+
+    csv_index = csv_index.merge(
+        pairs_to_wells[["Round", "Day", "Well", "Community"]],
+        on=["Round", "Day", "Well"],
+        how="left",
+        validate="many_to_one",
+    )
+
+    mono_csvs = csv_index[csv_index["Community"].isin(set(community_to_isolate.keys()))].copy()
+    mono_csvs["isolate"] = mono_csvs["Community"].map(community_to_isolate)
+
+    mono_csvs["mono_event_count"] = mono_csvs["filepath"].apply(lambda p: pd.read_csv(p).shape[0])
+
+    key_cols = ["Round", "Day", "Temp", "isolate"]
+    dup = mono_csvs.duplicated(subset=key_cols, keep=False)
+    if dup.any():
+        dups = mono_csvs.loc[dup, key_cols + ["filename", "filepath"]].sort_values(key_cols)
+        raise ValueError(
+            "Multiple monoculture CSVs found for the same (Round, Day, Temp, isolate) key. "
+            "Expected 1 per key. Duplicates:\n" + dups.to_string(index=False)
+        )
+
+    return mono_csvs[key_cols + ["mono_event_count"]].reset_index(drop=True)
+
+
 def feature_engineer_raw(df_raw: pd.DataFrame, numeric_cols: list, log_offsets: dict) -> pd.DataFrame:
     X = df_raw[numeric_cols].copy()
     for col in numeric_cols:
@@ -100,14 +152,7 @@ def majority_vote(preds_by_model: list) -> np.ndarray:
 
 
 def class_probability_totals(probs_by_model: list, class_names: list) -> dict:
-    """Aggregate probabilities across models and rows.
-
-    probs_by_model: list of (n_rows, n_classes)
-    class_names: list of class labels (length = n_classes)
-
-    Returns:
-        dict: {class_name: sum of averaged probabilities across rows}
-    """
+    """Aggregate probabilities across models and rows."""
     mat = np.stack(probs_by_model)         # (n_models, n_rows, n_classes)
     mean_probs = np.mean(mat, axis=0)      # (n_rows, n_classes)
     totals = np.sum(mean_probs, axis=0)    # (n_classes,)
@@ -136,6 +181,7 @@ def apply_pair_model_to_well(X_scaled: pd.DataFrame, isolate_A: str, isolate_B: 
 
     preds_by_model = []
     probas_by_model = []
+    first_classes = None
 
     for model_name, n_features in model_specs:
         model_path = os.path.join(pair_dir, f"{model_name}_top{n_features}.pkl")
@@ -155,9 +201,11 @@ def apply_pair_model_to_well(X_scaled: pd.DataFrame, isolate_A: str, isolate_B: 
         X_sel = X_scaled[feats]
         preds_by_model.append(model.predict(X_sel))
 
-        # probability totals require predict_proba
         if hasattr(model, "predict_proba"):
-            probas_by_model.append(model.predict_proba(X_sel))
+            probas = model.predict_proba(X_sel)
+            probas_by_model.append(probas)
+            if first_classes is None:
+                first_classes = list(getattr(model, "classes_"))
 
     y_pred = majority_vote(preds_by_model)
 
@@ -174,11 +222,8 @@ def apply_pair_model_to_well(X_scaled: pd.DataFrame, isolate_A: str, isolate_B: 
         "model_dir": os.path.basename(pair_dir),
     }
 
-    # Optional: summed probabilities (if available)
-    if probas_by_model:
-        # Use model.classes_ ordering; assume consistent across the 5 models
-        class_names = list(getattr(joblib.load(os.path.join(pair_dir, f"{model_specs[0][0]}_top{model_specs[0][1]}.pkl")), "classes_"))
-        totals = class_probability_totals(probas_by_model, class_names)
+    if probas_by_model and first_classes is not None:
+        totals = class_probability_totals(probas_by_model, first_classes)
         out["summed_proba_A"] = float(totals.get(isolate_A, np.nan))
         out["summed_proba_B"] = float(totals.get(isolate_B, np.nan))
 
@@ -200,6 +245,13 @@ def run_coculture_inference(r: int) -> pd.DataFrame:
         print("Warning: no co-culture wells found for this round.")
         return pd.DataFrame()
 
+    # Precompute monoculture event counts for this round (Round+Day+Temp+isolate)
+    mono_counts_df = build_mono_event_counts(r)
+    mono_lookup = {
+        (row.Round, row.Day, row.Temp, row.isolate): int(row.mono_event_count)
+        for row in mono_counts_df.itertuples(index=False)
+    }
+
     out = []
     for _, rec in pair_wells.iterrows():
         df_raw = pd.read_csv(rec["filepath"])
@@ -217,6 +269,11 @@ def run_coculture_inference(r: int) -> pd.DataFrame:
             models_root=models_root,
         )
 
+        key_A = (rec["Round"], rec["Day"], rec["Temp"], rec["IsolateA"])
+        key_B = (rec["Round"], rec["Day"], rec["Temp"], rec["IsolateB"])
+        res["isolate_A_mono_counts"] = mono_lookup.get(key_A, np.nan)
+        res["isolate_B_mono_counts"] = mono_lookup.get(key_B, np.nan)
+
         res.update({
             "Round": rec["Round"],
             "Temp": rec["Temp"],
@@ -233,7 +290,8 @@ def run_coculture_inference(r: int) -> pd.DataFrame:
 
     id_cols = [
         "Round", "Temp", "Day", "Date", "Well", "Sample",
-        "isolate_A", "isolate_B", "count_A", "count_B"
+        "isolate_A", "isolate_B", "count_A", "count_B",
+        "isolate_A_mono_counts", "isolate_B_mono_counts",
     ]
     extra_cols = [c for c in df_out.columns if c not in id_cols]
     df_out = df_out[id_cols + extra_cols]
