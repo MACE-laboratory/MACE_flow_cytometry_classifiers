@@ -187,10 +187,10 @@ def get_base_models():
 
         ("GaussianNB", GaussianNB()),
 
-        ("MLP_50_l2",  MLPClassifier((50,), alpha=1e-2, max_iter=500, random_state=23)),
-        ("MLP_100_nopen", MLPClassifier((100,), alpha=0, max_iter=500, random_state=23)),
-        ("MLP_5050_l2", MLPClassifier((50, 50), alpha=1e-2, max_iter=500, random_state=23)),
-        ("MLP_100_l2hard", MLPClassifier((100,), alpha=1e-1, max_iter=500, random_state=23)),
+        ("MLP_16_l2",  MLPClassifier((16,), alpha=1e-2, max_iter=400, random_state=23)),
+        ("MLP_32_nopen", MLPClassifier((32,), alpha=0, max_iter=400, random_state=23)),
+        ("MLP_1616_l2", MLPClassifier((16, 16), alpha=1e-2, max_iter=400, random_state=23)),
+        ("MLP_64_l2hard", MLPClassifier((64,), alpha=1e-1, max_iter=400, random_state=23)),
 
         ("Ada50_stump", AdaBoostClassifier(DecisionTreeClassifier(max_depth=1), n_estimators=50, learning_rate=0.5, random_state=23)),
         ("Ada100_depth2", AdaBoostClassifier(DecisionTreeClassifier(max_depth=2), n_estimators=100, learning_rate=0.3, random_state=23)),
