@@ -33,7 +33,7 @@ def load_and_combine_data(r: int):
     round_prefix = f"round{r}"
 
     metadata = pd.read_csv(metadata_path).drop_duplicates()
-    pairs_to_wells = pd.read_csv(pairs_to_wells_path).drop_duplicates()
+    pairs_to_wells = pd.read_csv(pairs_to_wells_path).drop('Temp', axis=1).drop_duplicates()
 
     pairs_to_wells["Round"] = pairs_to_wells["Round"].apply(normalize_round_str)
     pairs_to_wells["Day"] = pairs_to_wells["Day"].astype(str).str.zfill(2)
@@ -314,7 +314,7 @@ def main():
     combined_df = clean_with_isolation_forest(combined_df, numeric_cols)
 
     print("\n3. Creating train/test splits and engineering features...")
-    df_train, df_test, scaler, log_offsets, engineered_cols = create_train_test_splits(combined_df, numeric_cols)
+    df_train, df_test, scaler, log_offsets, engineered_cols = create_train_test_splits(combined_df, numeric_cols, random_state=23, n_train=20000, n_test=5000)
 
     # Save inference-critical artifacts (no round prefix — they live under round{NN}_models/)
     joblib.dump(scaler,          os.path.join(models_root, "scaler.pkl"))

@@ -1,4 +1,9 @@
 data/
 round01_models/
 round02_models/
+round03_models/
+round04_models/
+round04_models_old_6models/
+previous_iterations/
 models/
+validate_models_artifacts
